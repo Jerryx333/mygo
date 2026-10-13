@@ -677,34 +677,34 @@ func (e *coreText) ctFont(style Style) uintptr {
 			}
 		}
 	}
-	if key.Italic {
-		if with := syntheticItalic(font); with != 0 {
-			ct.release(font)
-			font = with
-		}
-	}
 	e.primary[key] = font
 	return font
 }
 
-// syntheticItalic returns an owned copy only when the font needs synthesis.
-// Core Text's y axis points up, so positive c moves the glyph's top right.
-// A cascade may preserve the primary font's matrix; do not skew it twice.
+// obliqueSkew slants synthetic italics by 14°, as WebKit does.
+var obliqueSkew = math.Tan(14 * math.Pi / 180)
+
+// syntheticItalic returns a slanted copy of a font without an italic face,
+// owned, or 0 when it has one. Core Text's y axis points up, so a positive
+// c moves the glyph's top right. A font already transformed is left as it
+// is, and color glyphs stay upright, as Core Text draws their bitmaps.
 func syntheticItalic(font uintptr) uintptr {
-	if font == 0 || ct.fontGetSymbolicTraits(font)&ctFontItalicTrait != 0 {
+	if font == 0 || ct.fontGetSymbolicTraits(font)&(ctFontItalicTrait|ctFontColorGlyphsTrait) != 0 {
 		return 0
 	}
 	matrix := ct.fontGetMatrix(font)
 	if matrix.c != 0 {
 		return 0
 	}
-	matrix.c = 0.25
+	matrix.c = obliqueSkew
 	with := ct.fontWithAttrs(font, 0, uintptr(unsafe.Pointer(&matrix)), 0)
 	runtime.KeepAlive(&matrix)
 	return with
 }
 
-// runFont applies italics after Core Text has resolved missing-glyph fallbacks.
+// runFont returns the Font of a run's CTFont, slanted when the run is
+// italic and the font has no italic face: the font of an italic style, or
+// one Core Text fell back to for glyphs it lacks, as CJK fonts.
 func (e *coreText) runFont(font uintptr, italic bool) *Font {
 	base := e.fontOf(font)
 	if !italic {
@@ -1023,14 +1023,6 @@ func (e *coreText) glyph(f *Font, id uint32, scale, dx float32, shade Shade, _ b
 	ct.fontGetBoundingRects(font, ctFontOrientationDefault, &g, &r, 1)
 	if r.w <= 0 || r.h <= 0 {
 		return bitmap{}
-	}
-	// Keep a conservative box for transformed fonts. Some fonts report
-	// nominal bounds: include the horizontal shear of the whole ink box
-	// as well as the reported bounds (and negative-y overhangs).
-	if m := ct.fontGetMatrix(font); m.c != 0 && ct.fontGetSymbolicTraits(font)&ctFontItalicTrait == 0 {
-		lo, hi := m.c*r.y, m.c*(r.y+r.h)
-		r.x += min(0, lo, hi)
-		r.w += max(0, lo, hi) - min(0, lo, hi)
 	}
 	s, x := float64(scale), float64(dx)
 	// Smoothing spreads a glyph up to a pixel further.

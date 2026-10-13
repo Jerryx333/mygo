@@ -24,7 +24,7 @@ func TestCoreTextSyntheticItalic(t *testing.T) {
 			}
 			for i, g := range italic.Lines[0].Glyphs {
 				p := plain.Lines[0].Glyphs[i]
-				if p.Font == g.Font || ct.fontGetMatrix(g.Font.native).c != 0.25 {
+				if p.Font == g.Font || ct.fontGetMatrix(g.Font.native).c != obliqueSkew {
 					t.Fatalf("glyph %d did not get a separate synthetic font", i)
 				}
 				if tc.text == "gy" {
@@ -114,10 +114,28 @@ func TestCoreTextItalicFallbackSpans(t *testing.T) {
 		for _, g := range l.Lines[0].Glyphs {
 			want := float64(0)
 			if g.Cluster >= 2 {
-				want = 0.25
+				want = obliqueSkew
 			}
 			if got := ct.fontGetMatrix(g.Font.native).c; got != want {
 				t.Fatalf("%q cluster %d: skew %v, want %v", text, g.Cluster, got, want)
+			}
+		}
+	}
+}
+
+// Core Text draws color glyphs upright whatever the font's matrix, so
+// emoji in italic text keep the upright font, as in WebKit.
+func TestCoreTextItalicColorGlyphs(t *testing.T) {
+	s := newSystem()
+	for _, family := range []string{"PingFang SC", "Helvetica"} {
+		l := s.Layout(Params{Text: "中😀", Style: Style{Family: family, Size: 32, Italic: true}})
+		for _, g := range l.Lines[0].Glyphs {
+			want := obliqueSkew
+			if g.Cluster == 1 {
+				want = 0
+			}
+			if got := ct.fontGetMatrix(g.Font.native).c; got != want {
+				t.Fatalf("%s cluster %d: skew %v, want %v", family, g.Cluster, got, want)
 			}
 		}
 	}
