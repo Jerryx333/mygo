@@ -396,6 +396,12 @@ type coreText struct {
 	// oblique maps an upright Font to its synthetic italic variant. Both
 	// are retained by fonts, and have distinct glyph/outline cache keys.
 	oblique map[*Font]*Font
+	// italic names an attribute that marks the runes of italic spans in a
+	// text that is not italic, owned, so that Core Text ends a run where
+	// italics start or stop even when both sides are in one font, as a
+	// CJK font without an italic face. Any value marks them; it is its
+	// own.
+	italic uintptr
 	// attrs are the attributes of strings in a font of primary, in each
 	// direction, without tracking or kerning, owned.
 	attrs map[attrsKey]uintptr
@@ -442,6 +448,7 @@ func newCoreText() (*coreText, error) {
 		color:      map[uintptr]bool{},
 		registered: map[string][]registeredFace{},
 		bands:      map[bandKey][2]float32{},
+		italic:     cfString("MyGoItalic"),
 	}
 	for i, dir := range [2]int8{0, 1} { // kCTWritingDirectionLeftToRight, RightToLeft
 		d := dir
@@ -748,6 +755,9 @@ func (e *coreText) styleSpans(attributed uintptr, style Style, spans []Span, tex
 		if font := e.ctFont(s); font != 0 {
 			ct.attributedSet(styled, r, ct.fontAttributeName, font)
 		}
+		if s.Italic && !style.Italic {
+			ct.attributedSet(styled, r, e.italic, e.italic)
+		}
 		if s.LetterSpacing != style.LetterSpacing && ct.trackingName != 0 {
 			tracking := cfFloat(float64(s.LetterSpacing))
 			ct.attributedSet(styled, r, ct.trackingName, tracking)
@@ -935,14 +945,16 @@ func (e *coreText) shape(text []rune, style Style, spans []Span, width float32, 
 		if line == 0 {
 			break
 		}
-		lines = e.addLine(mark, e.line(line, index, n, style, spans))
+		lines = e.addLine(mark, e.line(line, index, n, style.Italic))
 		ct.release(line)
 		start += count
 	}
 	return lines
 }
 
-func (e *coreText) line(line uintptr, index []int, n int, style Style, spans []Span) shapedLine {
+// line reads the runs of a line of a text that italic says is italic, or
+// whose runs styleSpans marked as such.
+func (e *coreText) line(line uintptr, index []int, n int, italic bool) shapedLine {
 	at := func(i int) int { return index[max(0, min(i, n))] }
 	r := ct.lineGetStringRange(line)
 	sl := shapedLine{start: at(r.location), end: at(r.location + r.length)}
@@ -951,14 +963,8 @@ func (e *coreText) line(line uintptr, index []int, n int, style Style, spans []S
 	for i := range ct.arrayGetCount(runs) {
 		run := ct.arrayGetValueAtIndex(runs, i)
 		rr := ct.runGetStringRange(run)
-		italic := style.Italic
-		for _, sp := range spans {
-			if at(rr.location) < sp.End {
-				italic = sp.style(style).Italic
-				break
-			}
-		}
-		f := e.runFont(ct.dictionaryGetValue(ct.runGetAttributes(run), ct.fontAttributeName), italic)
+		attrs := ct.runGetAttributes(run)
+		f := e.runFont(ct.dictionaryGetValue(attrs, ct.fontAttributeName), italic || ct.dictionaryGetValue(attrs, e.italic) != 0)
 		sr := shapedRun{font: f, start: at(rr.location), end: at(rr.location + rr.length)}
 		if count := ct.runGetGlyphCount(run); count > 0 {
 			e.runIDs = slices.Grow(e.runIDs[:0], count)[:count]

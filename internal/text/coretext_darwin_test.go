@@ -108,16 +108,20 @@ func TestCoreTextTrueItalic(t *testing.T) {
 
 func TestCoreTextItalicFallbackSpans(t *testing.T) {
 	s := newSystem()
-	for _, text := range []string{"中文中文", "😀文中文"} {
-		l := s.Layout(Params{Text: text, Style: Style{Family: "Helvetica", Size: 32},
-			Spans: EncodeSpans([]Span{{End: 2}, {End: 4, Italic: true}})})
-		for _, g := range l.Lines[0].Glyphs {
-			want := float64(0)
-			if g.Cluster >= 2 {
-				want = obliqueSkew
-			}
-			if got := ct.fontGetMatrix(g.Font.native).c; got != want {
-				t.Fatalf("%q cluster %d: skew %v, want %v", text, g.Cluster, got, want)
+	// In PingFang SC, both spans are in one font, which Core Text would
+	// shape as one run.
+	for _, family := range []string{"Helvetica", "PingFang SC"} {
+		for _, text := range []string{"中文中文", "😀文中文"} {
+			l := s.Layout(Params{Text: text, Style: Style{Family: family, Size: 32},
+				Spans: EncodeSpans([]Span{{End: 2}, {End: 4, Italic: true}})})
+			for _, g := range l.Lines[0].Glyphs {
+				want := float64(0)
+				if g.Cluster >= 2 {
+					want = obliqueSkew
+				}
+				if got := ct.fontGetMatrix(g.Font.native).c; got != want {
+					t.Fatalf("%s %q cluster %d: skew %v, want %v", family, text, g.Cluster, got, want)
+				}
 			}
 		}
 	}
